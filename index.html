@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32-CAM Phone Flasher</title>
+<style>
+  :root{--bg:#0b0f17;--card:#141a24;--line:#263041;--txt:#e6edf3;--mut:#8b97a8;--acc:#2f81f7;--ok:#3fb950;--bad:#f85149}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,Segoe UI,sans-serif}
+  main{max-width:640px;margin:0 auto;padding:20px 16px 60px}
+  h1{font-size:24px;margin:0 0 4px}
+  .sub{color:var(--mut);margin:0 0 18px;font-size:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+  .card h2{font-size:16px;margin:0 0 8px;display:flex;gap:10px;align-items:center}
+  .n{background:var(--acc);border-radius:50%;width:24px;height:24px;display:inline-grid;place-items:center;font-size:13px;flex:none}
+  p,li{color:var(--mut);line-height:1.5;font-size:14px}
+  ol{padding-left:20px;margin:6px 0}
+  button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:13px 18px;font-size:16px;cursor:pointer;width:100%}
+  button:disabled{opacity:.4}
+  button.sec{background:#21262d;border:1px solid var(--line)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
+  .row>*{flex:1 1 auto}
+  input[type=text],select{background:#0d1117;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:15px}
+  input[type=text]{font-family:monospace;width:120px;flex:0 0 auto}
+  input[type=file]{color:var(--mut);width:100%}
+  label{font-size:14px;color:var(--mut)}
+  .bar{height:14px;background:#0d1117;border-radius:7px;overflow:hidden;border:1px solid var(--line);margin-top:14px}
+  .bar div{height:100%;width:0;background:linear-gradient(90deg,var(--acc),var(--ok));transition:width .2s}
+  #pct{font-size:13px;color:var(--mut);margin-top:4px;text-align:right}
+  #log{background:#05070b;border:1px solid var(--line);border-radius:10px;padding:10px;height:180px;overflow:auto;font:11px/1.45 monospace;color:#9fb3c8;white-space:pre-wrap;margin-top:12px}
+  .status{font-weight:600;font-size:14px;display:block;margin-top:10px}
+  .ok{color:var(--ok)} .bad{color:var(--bad)}
+  code{background:#0d1117;padding:2px 6px;border-radius:5px;color:#ffa657}
+  #warn{display:none;background:#3d1d1d;border:1px solid var(--bad);color:#ffb3ad;padding:12px;border-radius:10px;margin-bottom:14px;font-size:14px}
+</style>
+</head>
+<body>
+<main>
+  <h1>📷 ESP32-CAM Flasher</h1>
+  <p class="sub">Flash the hotspot + live-camera firmware straight from your Android phone (Chrome + USB OTG). Also works in Chrome/Edge on a PC.</p>
+
+  <div id="warn"></div>
+
+  <div class="card">
+    <h2><span class="n">1</span>Plug in the board</h2>
+    <ol>
+      <li>Put the ESP32-CAM on its <b>ESP32-CAM-MB</b> USB base.</li>
+      <li>Connect it to your phone with a <b>USB OTG adapter</b> (USB-C → USB-A) and a micro-USB cable.</li>
+      <li>Hold <b>IO0</b> on the base, tap <b>RST</b>, then let go of IO0. That puts it in flash mode.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">2</span>Pick the firmware</h2>
+    <p>Choose <code>firmware.bin</code>, or the <code>firmware.zip</code> you downloaded from GitHub (no need to unzip).</p>
+    <input type="file" id="file" accept=".bin,.zip,application/zip,application/octet-stream">
+    <div class="row">
+      <label>Address</label>
+      <input type="text" id="addr" value="0x0">
+      <label style="flex:0 0 auto"><input type="checkbox" id="erase"> Erase all first</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">3</span>Connect &amp; flash</h2>
+    <div class="row">
+      <label>Speed</label>
+      <select id="baud">
+        <option value="115200">115200 (safest)</option>
+        <option value="230400">230400</option>
+        <option value="460800">460800 (fast)</option>
+      </select>
+    </div>
+    <div class="row"><button id="btnConnect">🔌 Connect board</button></div>
+    <span class="status" id="chip">Not connected</span>
+    <div class="row">
+      <button id="btnFlash" disabled>⚡ Flash firmware</button>
+    </div>
+    <div class="row"><button id="btnDisc" class="sec" disabled>Disconnect</button></div>
+    <div class="bar"><div id="prog"></div></div>
+    <div id="pct">0%</div>
+    <div id="log"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">4</span>Watch the camera</h2>
+    <ol>
+      <li>Unplug the board from the phone, plug it into a phone charger or power bank, press <b>RST</b>.</li>
+      <li>Phone Wi-Fi → connect to <b>ESP32-CAM</b>, password <b>12345678</b>. If Android says "no internet", tap <b>stay connected</b>.</li>
+      <li>Open <b>http://192.168.4.1</b> in Chrome.</li>
+    </ol>
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script type="module">
+import { ESPLoader, Transport } from "https://unpkg.com/esptool-js@0.4.5/bundle.js";
+
+const $ = id => document.getElementById(id);
+const logEl = $("log");
+const log = t => { logEl.textContent += t; logEl.scrollTop = logEl.scrollHeight; };
+const terminal = { clean(){ logEl.textContent=""; }, writeLine(d){ log(d+"\n"); }, write(d){ log(d); } };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* =====================================================================
+   WebUSB serial driver (Android has no USB Web Serial, so we talk to the
+   USB-to-serial chip directly). Looks like a Web Serial SerialPort so
+   esptool-js can use it. Supports CH340/CH341, CP210x, FTDI, CDC-ACM.
+   ===================================================================== */
+class UsbSerialPort {
+  constructor(device) {
+    this.device = device;
+    this.dtr = false; this.rts = false;
+    this.queue = []; this.waiter = null;
+    this.ready = false; this.loopStarted = false;
+    this.readable = null; this.writable = null;
+    const v = device.vendorId;
+    this.kind = v === 0x1a86 ? "ch340" : v === 0x10c4 ? "cp210x" : v === 0x0403 ? "ftdi" : "cdc";
+  }
+  getInfo() { return { usbVendorId: this.device.vendorId, usbProductId: this.device.productId }; }
+
+  _findInterfaces() {
+    const ifs = this.device.configuration.interfaces;
+    for (const i of ifs) {
+      const alt = i.alternates[0];
+      const inn = alt.endpoints.find(e => e.direction === "in" && e.type === "bulk");
+      const out = alt.endpoints.find(e => e.direction === "out" && e.type === "bulk");
+      if (inn && out && this.dataIf === undefined) {
+        this.dataIf = i.interfaceNumber; this.epIn = inn.endpointNumber; this.epOut = out.endpointNumber;
+        this.packetSize = inn.packetSize || 64;
+      }
+      if (alt.interfaceClass === 2 && this.ctrlIf === undefined) this.ctrlIf = i.interfaceNumber;
+    }
+    if (this.dataIf === undefined) throw new Error("No serial data interface found on this USB device");
+    if (this.ctrlIf === undefined) this.ctrlIf = this.dataIf;
+  }
+
+  async _out(recipient, request, value, index, data) {
+    const r = await this.device.controlTransferOut(
+      { requestType: this.kind === "cdc" ? "class" : "vendor", recipient, request, value, index }, data);
+    if (r.status !== "ok") throw new Error("USB control transfer failed: " + r.status);
+  }
+  async _in(recipient, request, value, index, len) {
+    return this.device.controlTransferIn({ requestType: "vendor", recipient, request, value, index }, len);
+  }
+
+  async _init() {
+    switch (this.kind) {
+      case "ch340": {
+        const v = await this._in("device", 0x5f, 0, 0, 2);
+        this.chVersion = v.data ? v.data.getUint8(0) : 0;
+        await this._out("device", 0xa1, 0, 0);              // serial init
+        break;
+      }
+      case "cp210x":
+        await this._out("interface", 0x00, 0x0001, this.dataIf);   // enable UART
+        await this._out("interface", 0x03, 0x0800, this.dataIf);   // 8N1
+        break;
+      case "ftdi":
+        await this._out("device", 0x00, 0, 0);               // reset
+        await this._out("device", 0x04, 0x0008, 0);          // 8N1
+        await this._out("device", 0x09, 1, 0);               // latency 1 ms
+        break;
+    }
+  }
+
+  _ch340Divisor(speed) {
+    const CLK = 48000000, DIV = (ps, f) => 1 << (12 - 3 * ps - f);
+    let ps;
+    for (ps = 3; ps >= 0; ps--) if (speed > CLK / (DIV(ps, 1) * 512)) break;
+    if (ps < 0) ps = 0;
+    let fact = 1, clk = DIV(ps, fact), div = Math.floor(CLK / (clk * speed));
+    if (div < 9 || div > 255) { div = Math.floor(div / 2); clk *= 2; fact = 0; }
+    if (16 * CLK / (clk * div) - 16 * speed >= 16 * speed - 16 * CLK / (clk * (div + 1))) div++;
+    if (fact === 1 && div % 2 === 0) { div /= 2; fact = 0; }
+    return ((0x100 - div) << 8) | (fact << 2) | ps;
+  }
+
+  async _setBaud(baud) {
+    switch (this.kind) {
+      case "ch340": {
+        let val = this._ch340Divisor(baud);
+        if (this.chVersion > 0x27) val |= 0x80;
+        await this._out("device", 0x9a, 0x1312, val);
+        await this._out("device", 0x9a, 0x2518, 0x00c3);     // 8N1, RX+TX on
+        break;
+      }
+      case "cp210x": {
+        const b = new ArrayBuffer(4); new DataView(b).setUint32(0, baud, true);
+        await this._out("interface", 0x1e, 0, this.dataIf, b);
+        break;
+      }
+      case "ftdi": {
+        const fracMap = [0, 3, 2, 4, 1, 5, 6, 7];
+        const div8 = Math.round(24000000 / baud);
+        let enc = (div8 >> 3) | (fracMap[div8 & 7] << 14);
+        if (enc === 1) enc = 0;
+        await this._out("device", 0x03, enc & 0xffff, (enc >> 16) & 0xffff);
+        break;
+      }
+      default: {
+        const b = new ArrayBuffer(7); const dv = new DataView(b);
+        dv.setUint32(0, baud, true); dv.setUint8(4, 0); dv.setUint8(5, 0); dv.setUint8(6, 8);
+        await this._out("interface", 0x20, 0, this.ctrlIf, b);
+      }
+    }
+  }
+
+  async _applySignals() {
+    const d = this.dtr, r = this.rts;
+    switch (this.kind) {
+      case "ch340":
+        await this._out("device", 0xa4, (~((d ? 0x20 : 0) | (r ? 0x40 : 0))) & 0xffff, 0); break;
+      case "cp210x":
+        await this._out("interface", 0x07, 0x0300 | (d ? 1 : 0) | (r ? 2 : 0), this.dataIf); break;
+      case "ftdi":
+        await this._out("device", 0x01, 0x0100 | (d ? 1 : 0), 0);
+        await this._out("device", 0x01, 0x0200 | (r ? 2 : 0), 0); break;
+      default:
+        await this._out("interface", 0x22, (d ? 1 : 0) | (r ? 2 : 0), this.ctrlIf);
+    }
+  }
+
+  async setSignals(s) {
+    if ("dataTerminalReady" in s) this.dtr = !!s.dataTerminalReady;
+    if ("requestToSend" in s) this.rts = !!s.requestToSend;
+    await this._applySignals();
+  }
+
+  _push(chunk) {
+    if (this.waiter) { const w = this.waiter; this.waiter = null; w(chunk); }
+    else this.queue.push(chunk);
+  }
+  _next() {
+    if (this.queue.length) return Promise.resolve(this.queue.shift());
+    return new Promise(r => (this.waiter = r));
+  }
+
+  async _readLoop() {
+    while (this.device.opened) {
+      try {
+        const r = await this.device.transferIn(this.epIn, 4096);
+        if (r.status === "stall") { await this.device.clearHalt("in", this.epIn); continue; }
+        if (!r.data || !r.data.byteLength) continue;
+        let u = new Uint8Array(r.data.buffer, r.data.byteOffset, r.data.byteLength);
+        if (this.kind === "ftdi") {                       // strip 2 status bytes per packet
+          const parts = [];
+          for (let i = 0; i < u.length; i += this.packetSize) parts.push(u.slice(i + 2, i + this.packetSize));
+          const total = parts.reduce((a, p) => a + p.length, 0);
+          if (!total) continue;
+          const m = new Uint8Array(total); let o = 0;
+          for (const p of parts) { m.set(p, o); o += p.length; }
+          u = m;
+        } else u = u.slice();
+        this._push(u);
+      } catch (e) {
+        if (!this.device.opened) break;
+        await sleep(20);
+      }
+    }
+  }
+
+  async open({ baudRate }) {
+    const dev = this.device;
+    if (!dev.opened) await dev.open();
+    if (!dev.configuration) await dev.selectConfiguration(1);
+    if (!this.ready) {
+      this._findInterfaces();
+      await dev.claimInterface(this.dataIf);
+      if (this.ctrlIf !== this.dataIf) { try { await dev.claimInterface(this.ctrlIf); } catch {} }
+      await this._init();
+      this.ready = true;
+    }
+    await this._setBaud(baudRate);
+    await this._applySignals();
+    if (!this.loopStarted) { this.loopStarted = true; this._readLoop(); }
+    this.queue = [];
+    this.readable = new ReadableStream({
+      pull: async c => { const chunk = await this._next(); if (chunk) c.enqueue(chunk); },
+      cancel: () => { if (this.waiter) { const w = this.waiter; this.waiter = null; w(null); } },
+    });
+    this.writable = new WritableStream({
+      write: async chunk => {
+        const r = await dev.transferOut(this.epOut, chunk);
+        if (r.status !== "ok") throw new Error("USB write failed: " + r.status);
+      },
+    });
+  }
+
+  // esptool-js closes/reopens the port when changing speed – keep USB alive.
+  async close() {}
+
+  async shutdown() {
+    try { await this.device.releaseInterface(this.dataIf); } catch {}
+    try { await this.device.close(); } catch {}
+    this.ready = false; this.loopStarted = false;
+  }
+}
+
+/* ===================== UI / flashing ===================== */
+const isAndroid = /Android/i.test(navigator.userAgent);
+const hasUsb = "usb" in navigator;
+const hasSerial = "serial" in navigator;
+const useUsb = hasUsb && (isAndroid || !hasSerial);
+
+if (!hasUsb && !hasSerial) {
+  $("warn").style.display = "block";
+  $("warn").innerHTML = "This browser can't talk to USB. Open this page in <b>Chrome</b> (Android or PC). It won't work on iPhone.";
+  $("btnConnect").disabled = true;
+}
+if (location.protocol === "file:" && isAndroid) {
+  $("warn").style.display = "block";
+  $("warn").innerHTML = "Open this page from its <b>https://</b> web address (GitHub Pages), not as a downloaded file.";
+}
+if (!isAndroid) $("baud").value = "460800";
+
+let port, transport, loader, firmware = null;
+
+$("file").onchange = async () => {
+  const f = $("file").files[0]; firmware = null;
+  if (!f) return;
+  try {
+    if (f.name.toLowerCase().endsWith(".zip")) {
+      const zip = await JSZip.loadAsync(f);
+      const names = Object.keys(zip.files).filter(n => n.toLowerCase().endsWith(".bin"));
+      const pick = names.find(n => /firmware|merged/i.test(n)) || names[0];
+      if (!pick) throw new Error("No .bin file inside the zip");
+      firmware = { name: pick, data: await zip.file(pick).async("binarystring") };
+    } else {
+      firmware = { name: f.name, data: await new Promise((res, rej) => {
+        const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsBinaryString(f);
+      }) };
+    }
+    $("addr").value = /\.ino\.bin$/i.test(firmware.name) && !/merged/i.test(firmware.name) ? "0x10000" : "0x0";
+    log(`Loaded ${firmware.name} (${firmware.data.length} bytes)\n`);
+  } catch (e) { log("❌ " + e.message + "\n"); }
+};
+
+$("btnConnect").onclick = async () => {
+  try {
+    if (useUsb) {
+      const dev = await navigator.usb.requestDevice({ filters: [
+        { vendorId: 0x1a86 }, { vendorId: 0x10c4 }, { vendorId: 0x0403 }, { vendorId: 0x303a }, { classCode: 2 } ] });
+      port = new UsbSerialPort(dev);
+      log(`USB device: ${dev.productName || "serial"} (${port.kind})\n`);
+    } else {
+      port = await navigator.serial.requestPort();
+    }
+    transport = new Transport(port, true);
+    const baud = parseInt($("baud").value);
+    loader = new ESPLoader({ transport, baudrate: baud, romBaudrate: 115200, terminal });
+    $("chip").textContent = "Connecting…"; $("chip").className = "status";
+    const chip = await loader.main();
+    $("chip").textContent = "✅ Connected: " + chip; $("chip").className = "status ok";
+    $("btnFlash").disabled = false; $("btnDisc").disabled = false; $("btnConnect").disabled = true;
+  } catch (e) {
+    $("chip").textContent = "❌ Failed – hold IO0, tap RST, try again"; $("chip").className = "status bad";
+    log("\nError: " + e.message + "\n");
+    try { await transport?.disconnect(); } catch {}
+    try { await port?.shutdown?.(); } catch {}
+  }
+};
+
+$("btnDisc").onclick = async () => {
+  try { await transport.disconnect(); } catch {}
+  try { await port?.shutdown?.(); } catch {}
+  $("chip").textContent = "Not connected"; $("chip").className = "status";
+  $("btnFlash").disabled = true; $("btnDisc").disabled = true; $("btnConnect").disabled = false;
+};
+
+$("btnFlash").onclick = async () => {
+  if (!firmware) { alert("Pick the firmware file first (step 2)"); return; }
+  const address = parseInt($("addr").value, 16);
+  if (isNaN(address)) { alert("Bad address"); return; }
+  $("btnFlash").disabled = true;
+  try {
+    log(`\nFlashing ${firmware.name} at 0x${address.toString(16)}… keep the screen on.\n`);
+    await loader.writeFlash({
+      fileArray: [{ data: firmware.data, address }],
+      flashSize: "keep", flashMode: "keep", flashFreq: "keep",
+      eraseAll: $("erase").checked, compress: true,
+      reportProgress: (i, written, total) => {
+        const p = (written / total * 100).toFixed(0);
+        $("prog").style.width = p + "%"; $("pct").textContent = p + "%";
+      },
+    });
+    log("\n✅ Done! Press RST on the board (or unplug and replug).\n");
+    try { await loader.hardReset(); } catch {}
+  } catch (e) {
+    log("\n❌ Flash error: " + e.message + "\nTry speed 115200 and flash again.\n");
+  }
+  $("btnFlash").disabled = false;
+};
+</script>
+</body>
+</html>
