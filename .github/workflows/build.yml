@@ -1,0 +1,51 @@
+# Put this file in your repo at:  .github/workflows/build.yml
+# It compiles esp32cam_hotspot.ino and gives you firmware.bin to flash from your phone.
+name: Build ESP32-CAM firmware
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 board support
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+
+      - name: Compile for AI Thinker ESP32-CAM
+        run: |
+          mkdir -p sketch/esp32cam_hotspot
+          cp esp32cam_hotspot.ino sketch/esp32cam_hotspot/
+          arduino-cli compile --fqbn esp32:esp32:esp32cam --output-dir out sketch/esp32cam_hotspot
+          ls -la out
+
+      - name: Make one single firmware.bin (flash at 0x0)
+        run: |
+          if ls out/*.merged.bin >/dev/null 2>&1; then
+            cp out/*.merged.bin firmware.bin
+          else
+            pip install esptool==4.8.1
+            BOOTAPP=$(find ~/.arduino15/packages/esp32/hardware/esp32 -name boot_app0.bin | head -1)
+            python -m esptool --chip esp32 merge_bin -o firmware.bin \
+              --flash_mode keep --flash_freq keep --flash_size 4MB \
+              0x1000 out/esp32cam_hotspot.ino.bootloader.bin \
+              0x8000 out/esp32cam_hotspot.ino.partitions.bin \
+              0xe000 "$BOOTAPP" \
+              0x10000 out/esp32cam_hotspot.ino.bin
+          fi
+          ls -la firmware.bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: firmware.bin
+          
